@@ -1,0 +1,11 @@
+.env
+position_state.json
+*.tmp
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+.idea/
+.vscode/
