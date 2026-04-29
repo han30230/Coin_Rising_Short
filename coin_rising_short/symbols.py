@@ -1,9 +1,8 @@
 import logging
 import time
-from datetime import datetime, timezone
 from typing import Dict
 
-from coin_rising_short import client, coingecko, config, upbit
+from coin_rising_short import client, config, upbit
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +23,6 @@ def get_trading_symbols() -> Dict[str, dict]:
     else:
         logger.info("업비트 상장 필터 적용: OFF")
 
-    fundamentals = coingecko.get_symbol_fundamentals()
-    now_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
-    min_age_ms = config.MIN_LISTED_DAYS * 24 * 60 * 60 * 1000
-
     futures_symbols = {
         s["symbol"]: s
         for s in fut_data["symbols"]
@@ -38,11 +33,6 @@ def get_trading_symbols() -> Dict[str, dict]:
             and not bool(s.get("closeOnly"))
             and "LIMIT" in (s.get("orderTypes") or [])
             and (upbit_assets is None or str(s.get("baseAsset", "")).upper() in upbit_assets)
-            and int(s.get("onboardDate") or 0) > 0
-            and (now_ms - int(s.get("onboardDate") or 0) >= min_age_ms)
-            and str(s.get("baseAsset", "")).upper() in fundamentals
-            and fundamentals[str(s.get("baseAsset", "")).upper()]["market_cap"] >= config.MIN_MARKET_CAP_USD
-            and fundamentals[str(s.get("baseAsset", "")).upper()]["mcap_fdv_ratio"] >= config.MIN_MCAP_FDV_RATIO
         )
     }
 

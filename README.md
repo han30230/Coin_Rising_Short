@@ -16,9 +16,6 @@
   - `POSITION_STATE_FILE` (기본값: `position_state.json`)
   - `TRADE_JOURNAL_FILE` (기본값: `logs/trade_journal.csv`)
   - `FILTER_UPBIT_LISTED` (`true`/`false`, 기본값: `true`)
-  - `MIN_LISTED_DAYS` (기본값: `365`)
-  - `MIN_MARKET_CAP_USD` (기본값: `200000000`)
-  - `MIN_MCAP_FDV_RATIO` (기본값: `0.65`)
   - `MIN_FUNDING_RATE` (기본값: `-0.005`, 즉 -0.5%)
   - `FORCE_HEDGE` (`true`/`false`, 기본값: `false`)
 
@@ -33,9 +30,6 @@ HTTP_MAX_RETRIES=5
 POSITION_STATE_FILE=position_state.json
 TRADE_JOURNAL_FILE=logs/trade_journal.csv
 FILTER_UPBIT_LISTED=true
-MIN_LISTED_DAYS=365
-MIN_MARKET_CAP_USD=200000000
-MIN_MCAP_FDV_RATIO=0.65
 MIN_FUNDING_RATE=-0.005
 FORCE_HEDGE=false
 ```

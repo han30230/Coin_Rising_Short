@@ -43,11 +43,6 @@ FORCE_HEDGE = (os.getenv("FORCE_HEDGE") or "false").lower() == "true"
 # 업비트 상장 코인만 거래 대상으로 제한 (기본: true)
 FILTER_UPBIT_LISTED = (os.getenv("FILTER_UPBIT_LISTED") or "true").lower() == "true"
 
-# 추가 펀더멘털/상장 연차 필터
-MIN_LISTED_DAYS = int(os.getenv("MIN_LISTED_DAYS") or "365")
-MIN_MARKET_CAP_USD = Decimal(os.getenv("MIN_MARKET_CAP_USD") or "200000000")
-MIN_MCAP_FDV_RATIO = Decimal(os.getenv("MIN_MCAP_FDV_RATIO") or "0.65")
-
 # 펀딩비 필터: lastFundingRate 가 이 값보다 커야 진입 허용
 # -0.005 == -0.5%
 MIN_FUNDING_RATE = Decimal(os.getenv("MIN_FUNDING_RATE") or "-0.005")
