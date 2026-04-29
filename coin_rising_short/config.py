@@ -25,7 +25,8 @@ DISCOUNT_PCT = Decimal("0.01")
 GAINER_THRESHOLD_PCT = Decimal("20")
 MIN_VOLUME_USDT = Decimal("1_000_000")
 REENTRY_RISE_PCT = Decimal("50")
-TAKE_PROFIT_PCT = Decimal("21")
+REENTRY_MAX_COUNT = 4
+TAKE_PROFIT_PCT = Decimal("10")
 POLL_INTERVAL_SEC = 10
 
 LEVERAGE = int(os.getenv("LEVERAGE") or "5")
@@ -34,4 +35,19 @@ HTTP_MAX_RETRIES = int(os.getenv("HTTP_MAX_RETRIES") or "5")
 POSITION_STATE_PATH = os.getenv("POSITION_STATE_FILE") or os.path.join(
     _PROJECT_ROOT, "position_state.json"
 )
+TRADE_JOURNAL_PATH = os.getenv("TRADE_JOURNAL_FILE") or os.path.join(
+    _PROJECT_ROOT, "logs", "trade_journal.csv"
+)
 FORCE_HEDGE = (os.getenv("FORCE_HEDGE") or "false").lower() == "true"
+
+# 업비트 상장 코인만 거래 대상으로 제한 (기본: true)
+FILTER_UPBIT_LISTED = (os.getenv("FILTER_UPBIT_LISTED") or "true").lower() == "true"
+
+# 추가 펀더멘털/상장 연차 필터
+MIN_LISTED_DAYS = int(os.getenv("MIN_LISTED_DAYS") or "365")
+MIN_MARKET_CAP_USD = Decimal(os.getenv("MIN_MARKET_CAP_USD") or "200000000")
+MIN_MCAP_FDV_RATIO = Decimal(os.getenv("MIN_MCAP_FDV_RATIO") or "0.65")
+
+# 펀딩비 필터: lastFundingRate 가 이 값보다 커야 진입 허용
+# -0.005 == -0.5%
+MIN_FUNDING_RATE = Decimal(os.getenv("MIN_FUNDING_RATE") or "-0.005")

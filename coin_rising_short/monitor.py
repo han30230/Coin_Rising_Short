@@ -1,15 +1,43 @@
+import logging
 import time
 from decimal import Decimal
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
-from coin_rising_short import client, config, orders, state, symbols
+from coin_rising_short import client, config, orders, runtime, state, symbols, trade_journal
+
+logger = logging.getLogger(__name__)
 
 
-def get_futures_top_gainers() -> List[Dict[str, Any]]:
+def _get_funding_rate_map() -> Dict[str, Decimal]:
+    resp = client._http_get(f"{config.BASE_URL_FUTURES}/fapi/v1/premiumIndex", timeout=10)
+    data = client.parse_json_response(resp, "premiumIndex")
+    if not isinstance(data, list):
+        raise RuntimeError(f"premiumIndex 응답 형식 오류: {type(data)}")
+    out: Dict[str, Decimal] = {}
+    for row in data:
+        if not isinstance(row, dict):
+            continue
+        symbol = row.get("symbol")
+        if not isinstance(symbol, str):
+            continue
+        try:
+            out[symbol] = Decimal(str(row.get("lastFundingRate", "0")))
+        except Exception:
+            continue
+    return out
+
+
+def get_futures_gainers_and_top_movers(
+    funding_rate_map: Dict[str, Decimal],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     url = f"{config.BASE_URL_FUTURES}/fapi/v1/ticker/24hr"
-    data = client._http_get(url, timeout=10).json()
+    response = client._http_get(url, timeout=10)
+    data = client.parse_json_response(response, "24hr ticker")
+    if not isinstance(data, list):
+        raise RuntimeError(f"24hr ticker 응답 형식 오류: {type(data)}")
 
-    result: List[Dict[str, Any]] = []
+    qualified: List[Dict[str, Any]] = []
+    all_movers: List[Dict[str, Any]] = []
     for t in data:
         symbol = t.get("symbol")
         if symbol not in symbols.TRADING_SYMBOLS:
@@ -19,27 +47,113 @@ def get_futures_top_gainers() -> List[Dict[str, Any]]:
             turnover_24h = Decimal(t["quoteVolume"])
             last_price = Decimal(t["lastPrice"])
 
-            if change_pct >= config.GAINER_THRESHOLD_PCT and turnover_24h >= config.MIN_VOLUME_USDT:
-                result.append(
-                    {
-                        "symbol": symbol,
-                        "change_pct": float(change_pct),
-                        "last_price": float(last_price),
-                    }
-                )
+            row = {
+                "symbol": symbol,
+                "change_pct": change_pct,
+                "last_price": last_price,
+                "turnover_24h": turnover_24h,
+                "funding_rate": funding_rate_map.get(symbol, Decimal("0")),
+            }
+            all_movers.append(row)
+            if (
+                change_pct >= config.GAINER_THRESHOLD_PCT
+                and turnover_24h >= config.MIN_VOLUME_USDT
+                and row["funding_rate"] > config.MIN_FUNDING_RATE
+            ):
+                qualified.append(row)
         except Exception:
             continue
 
-    result.sort(key=lambda x: x["change_pct"], reverse=True)
-    return result
+    qualified.sort(key=lambda x: x["change_pct"], reverse=True)
+    all_movers.sort(key=lambda x: x["change_pct"], reverse=True)
+    return qualified, all_movers[:3]
 
 
-def check_filled_and_place_tp() -> None:
+def _get_filled_position(st: Dict[str, Any]) -> Tuple[Decimal, Decimal, str]:
+    total_qty = Decimal("0")
+    weighted_sum = Decimal("0")
+    direction = "SHORT"
+    for entry in st.get("entries", []):
+        if not entry.get("filled"):
+            continue
+        qty = Decimal(str(entry.get("qty", "0")))
+        price = Decimal(str(entry.get("entry_price", "0")))
+        if qty <= 0 or price <= 0:
+            continue
+        total_qty += qty
+        weighted_sum += price * qty
+        direction = str(entry.get("direction", "SHORT"))
+    if total_qty <= 0:
+        return Decimal("0"), Decimal("0"), direction
+    return weighted_sum / total_qty, total_qty, direction
+
+
+def _refresh_symbol_take_profit(symbol: str, st: Dict[str, Any]) -> bool:
+    avg_entry, total_qty, direction = _get_filled_position(st)
+    if total_qty <= 0:
+        return False
+
+    need_replace = False
+    existing_tp_oid = st.get("tp_order_id")
+    target_avg = str(avg_entry)
+    target_qty = str(total_qty)
+
+    if existing_tp_oid:
+        old_avg = str(st.get("tp_entry_price", ""))
+        old_qty = str(st.get("tp_qty", ""))
+        tp_status = orders.get_order_status(symbol, int(existing_tp_oid))
+        if tp_status == "FILLED":
+            return False
+        if tp_status in ("NEW", "PARTIALLY_FILLED") and old_avg == target_avg and old_qty == target_qty:
+            return False
+        need_replace = True
+
+    if need_replace and existing_tp_oid:
+        if not orders.cancel_order(symbol, int(existing_tp_oid)):
+            return False
+
+    tp_oid = None
+    for attempt in range(3):
+        tp_oid = orders.place_take_profit_order(symbol, direction, avg_entry, total_qty)
+        if tp_oid is not None:
+            break
+        logger.warning(
+            "TP 재생성 실패 재시도: %s (%s/3)",
+            symbol,
+            attempt + 1,
+            extra={"event": "symbol_tp_refresh_retry", "symbol": symbol},
+        )
+        time.sleep(0.5)
+    if tp_oid is None:
+        logger.error(
+            "TP 재생성 최종 실패: %s (무보호 구간 가능)",
+            symbol,
+            extra={"event": "symbol_tp_refresh_failed", "symbol": symbol},
+        )
+        return False
+    st["tp_order_id"] = tp_oid
+    st["tp_entry_price"] = avg_entry
+    st["tp_qty"] = total_qty
+    st["tp_exit_logged"] = False
+    logger.info(
+        "심볼 TP 갱신: %s avg=%s qty=%s tpOrderId=%s",
+        symbol,
+        avg_entry,
+        total_qty,
+        tp_oid,
+        extra={"event": "symbol_tp_refreshed", "symbol": symbol, "order_id": tp_oid},
+    )
+    return True
+
+
+def check_filled_and_refresh_tp() -> None:
     dirty = False
+    remove_symbols: List[str] = []
     for symbol, st in state.position_state.items():
         entries = st.get("entries", [])
+        symbol_dirty = False
         for entry in entries:
-            if entry.get("tp_done"):
+            if entry.get("filled") or entry.get("closed"):
                 continue
 
             order_id = entry["order_id"]
@@ -50,18 +164,61 @@ def check_filled_and_place_tp() -> None:
             status = orders.get_order_status(symbol, order_id)
             if status is None:
                 continue
+            if status == "NOT_FOUND":
+                logger.warning(
+                    "주문 미존재(-2013)로 엔트리 종료 처리: %s orderId=%s",
+                    symbol,
+                    order_id,
+                    extra={"event": "entry_order_not_found", "symbol": symbol, "order_id": order_id},
+                )
+                entry["filled"] = False
+                entry["closed"] = True
+                dirty = True
+                symbol_dirty = True
+                continue
 
             if status == "FILLED":
-                print(
-                    f"✅ 진입 체결 확인: {symbol} {direction} (orderId={order_id}) → TP 주문 생성 시도"
+                logger.info(
+                    "진입 체결 확인: %s %s (orderId=%s) -> TP 주문 생성 시도",
+                    symbol,
+                    direction,
+                    order_id,
+                    extra={
+                        "event": "entry_filled",
+                        "symbol": symbol,
+                        "direction": direction,
+                        "order_id": order_id,
+                    },
                 )
-                tp_oid = orders.place_take_profit_order(symbol, direction, entry_price, qty)
-                if tp_oid is not None:
-                    entry["tp_order_id"] = tp_oid
-                    entry["tp_done"] = True
-                else:
-                    entry["tp_done"] = False
+                detail = orders.get_order_detail(symbol, order_id)
+                filled_time_ms = None
+                if detail and isinstance(detail, dict):
+                    ap = Decimal(str(detail.get("avgPrice", "0")))
+                    ex = Decimal(str(detail.get("executedQty", "0")))
+                    if ap > 0:
+                        entry["entry_price"] = ap
+                        entry_price = ap
+                    if ex > 0:
+                        entry["qty"] = ex
+                        qty = ex
+                    t = detail.get("updateTime")
+                    if isinstance(t, int):
+                        filled_time_ms = t
+
+                if not entry.get("entry_logged"):
+                    trade_journal.log_entry_filled(
+                        symbol=symbol,
+                        direction=direction,
+                        order_id=order_id,
+                        entry_price=entry_price,
+                        qty=qty,
+                        filled_time_ms=filled_time_ms,
+                    )
+                    entry["entry_logged"] = True
+                entry["filled"] = True
+                entry["closed"] = False
                 dirty = True
+                symbol_dirty = True
             elif status == "PARTIALLY_FILLED":
                 d = orders.get_order_detail(symbol, order_id)
                 if d:
@@ -72,33 +229,166 @@ def check_filled_and_place_tp() -> None:
                     if ap > 0:
                         entry["entry_price"] = ap
                     dirty = True
+                    symbol_dirty = True
             elif status in ("CANCELED", "REJECTED", "EXPIRED"):
-                print(
-                    f"⚠️ 진입 주문 종료 상태({status}): {symbol} (orderId={order_id}) → TP 생성 스킵"
+                logger.warning(
+                    "진입 주문 종료 상태(%s): %s (orderId=%s) -> TP 생성 스킵",
+                    status,
+                    symbol,
+                    order_id,
+                    extra={
+                        "event": "entry_closed_without_tp",
+                        "symbol": symbol,
+                        "status": status,
+                        "order_id": order_id,
+                    },
                 )
-                entry["tp_done"] = True
+                entry["filled"] = False
+                entry["closed"] = True
                 dirty = True
+                symbol_dirty = True
+        if symbol_dirty and _refresh_symbol_take_profit(symbol, st):
+            dirty = True
+        # 모든 엔트리가 종료됐고 TP도 없다면, 심볼 상태를 지워서 다음 사이클 진입 가능하게 함.
+        entries = st.get("entries", [])
+        if entries and all(bool(e.get("closed")) for e in entries) and not st.get("tp_order_id"):
+            remove_symbols.append(symbol)
+            logger.info(
+                "종료된 심볼 상태 정리(수동청산/취소 등): %s",
+                symbol,
+                extra={"event": "symbol_state_cleared_manual", "symbol": symbol},
+            )
+            dirty = True
+    for symbol in remove_symbols:
+        state.position_state.pop(symbol, None)
+    if dirty:
+        state.save_position_state()
+
+
+def check_tp_filled_and_log() -> None:
+    dirty = False
+    remove_symbols: List[str] = []
+    for symbol, st in state.position_state.items():
+        tp_oid = st.get("tp_order_id")
+        if not tp_oid or st.get("tp_exit_logged"):
+            continue
+        tp_detail = orders.get_order_detail(symbol, int(tp_oid))
+        if not tp_detail or tp_detail.get("status") != "FILLED":
+            continue
+        exit_price = Decimal(str(tp_detail.get("avgPrice", "0")))
+        exit_qty = Decimal(str(tp_detail.get("executedQty", "0")))
+        if exit_price <= 0 or exit_qty <= 0:
+            continue
+
+        avg_entry = Decimal(str(st.get("tp_entry_price", "0")))
+        direction = "SHORT"
+        if st.get("entries"):
+            direction = str(st["entries"][0].get("direction", "SHORT"))
+
+        trade_journal.log_exit_filled(
+            symbol=symbol,
+            direction=direction,
+            entry_order_id="MULTI",
+            tp_order_id=int(tp_oid),
+            entry_price=avg_entry if avg_entry > 0 else exit_price,
+            exit_price=exit_price,
+            qty=exit_qty,
+            entry_time_ms=None,
+            exit_time_ms=tp_detail.get("updateTime") if isinstance(tp_detail.get("updateTime"), int) else None,
+            note="평균진입가 기준 TP 청산",
+        )
+        st["tp_exit_logged"] = True
+        # TP 체결 시 현재 사이클 엔트리를 종료 처리해 다음 사이클 진입 가능하게 함.
+        for entry in st.get("entries", []):
+            if entry.get("filled"):
+                entry["closed"] = True
+                entry["filled"] = False
+        remove_symbols.append(symbol)
+        dirty = True
+        logger.info(
+            "TP 체결 기록 완료: %s tpOrderId=%s",
+            symbol,
+            tp_oid,
+            extra={"event": "tp_filled_logged", "symbol": symbol, "order_id": int(tp_oid)},
+        )
+    for symbol in remove_symbols:
+        state.position_state.pop(symbol, None)
+        logger.info(
+            "심볼 상태 정리 완료(신규 사이클 허용): %s",
+            symbol,
+            extra={"event": "symbol_state_cleared", "symbol": symbol},
+        )
     if dirty:
         state.save_position_state()
 
 
 def monitor_loop() -> None:
-    print("🚀 Binance 선물 급등 종목 감시 시작 (스팟+선물 공존 필터 적용)...")
+    logger.info("Binance 선물 급등 종목 감시 시작 (스팟+선물 공존 필터 적용)...")
     while True:
         try:
-            gainers = get_futures_top_gainers()
+            funding_rate_map = _get_funding_rate_map()
+            gainers, top3 = get_futures_gainers_and_top_movers(funding_rate_map)
             now_str = time.strftime("%H:%M:%S")
 
-            print("\n" + "─" * 20 + f" [{now_str}] 감시 중 " + "─" * 20)
+            logger.info("%s [%s] 감시 중 %s", "-" * 20, now_str, "-" * 20)
             if not gainers:
-                print("⏳ 조건에 맞는 종목 없음")
+                logger.info(
+                    "조건에 맞는 종목 없음 -> 전체 상승률 TOP 3 표시",
+                    extra={"event": "no_qualified_symbols_fallback"},
+                )
+                for i, g in enumerate(top3, start=1):
+                    symbol = g["symbol"]
+                    until = runtime.SKIP_UNTIL.get(symbol, 0)
+                    if until and int(time.time()) < until:
+                        continue
+                    current_price = g["last_price"]
+                    change_pct = g["change_pct"]
+                    turnover_24h = g.get("turnover_24h", Decimal("0"))
+                    funding_rate = g.get("funding_rate", Decimal("0"))
+                    logger.info(
+                        "TOP%s. %s | price: %.4f | change: %.2f%% | volume(24h): %s | funding: %s",
+                        i,
+                        symbol,
+                        current_price,
+                        change_pct,
+                        turnover_24h,
+                        funding_rate,
+                        extra={
+                            "event": "top_movers_fallback",
+                            "symbol": symbol,
+                            "rank": i,
+                            "last_price": str(current_price),
+                            "change_pct": str(change_pct),
+                            "turnover_24h": str(turnover_24h),
+                            "funding_rate": str(funding_rate),
+                        },
+                    )
             else:
                 for i, g in enumerate(gainers[:10], start=1):
                     symbol = g["symbol"]
-                    current_price = Decimal(str(g["last_price"]))
-                    change_pct = Decimal(str(g["change_pct"]))
+                    until = runtime.SKIP_UNTIL.get(symbol, 0)
+                    if until and int(time.time()) < until:
+                        continue
+                    current_price = g["last_price"]
+                    change_pct = g["change_pct"]
+                    funding_rate = g.get("funding_rate", Decimal("0"))
 
-                    print(f"{i}. {symbol} | price: {current_price:.4f} | change: {change_pct:.2f}%")
+                    logger.info(
+                        "%s. %s | price: %.4f | change: %.2f%% | funding: %s",
+                        i,
+                        symbol,
+                        current_price,
+                        change_pct,
+                        funding_rate,
+                        extra={
+                            "event": "gainer_ranked",
+                            "symbol": symbol,
+                            "rank": i,
+                            "last_price": str(current_price),
+                            "change_pct": str(change_pct),
+                            "funding_rate": str(funding_rate),
+                        },
+                    )
 
                     if symbol not in state.position_state:
                         entry = orders.place_short_order(symbol)
@@ -106,32 +396,53 @@ def monitor_loop() -> None:
                             entry_price, qty, order_id = entry
                             state.position_state[symbol] = {
                                 "entry_price": entry_price,
-                                "reentered": False,
+                                "reentry_count": 0,
+                                "last_reentry_price": entry_price,
+                                "tp_order_id": None,
+                                "tp_entry_price": Decimal("0"),
+                                "tp_qty": Decimal("0"),
+                                "tp_exit_logged": False,
                                 "entries": [
                                     {
                                         "direction": "SHORT",
                                         "entry_price": entry_price,
                                         "qty": qty,
                                         "order_id": order_id,
-                                        "tp_done": False,
-                                        "tp_order_id": None,
+                                        "filled": False,
                                     }
                                 ],
                             }
-                            print(
-                                f"📝 {symbol} 첫 진입 기록: entry_price={entry_price}, orderId={order_id}, qty={qty}"
+                            logger.info(
+                                "%s 첫 진입 기록: entry_price=%s, orderId=%s, qty=%s",
+                                symbol,
+                                entry_price,
+                                order_id,
+                                qty,
+                                extra={
+                                    "event": "entry_recorded",
+                                    "symbol": symbol,
+                                    "entry_price": str(entry_price),
+                                    "order_id": order_id,
+                                    "qty": str(qty),
+                                },
                             )
                             state.save_position_state()
                         continue
 
                     st = state.position_state[symbol]
-                    if not st.get("reentered"):
-                        target_price = st["entry_price"] * (
+                    reentry_count = int(st.get("reentry_count", 0))
+                    if reentry_count < config.REENTRY_MAX_COUNT:
+                        base_reentry_price = Decimal(str(st.get("last_reentry_price", st["entry_price"])))
+                        target_price = base_reentry_price * (
                             Decimal("1") + config.REENTRY_RISE_PCT / Decimal("100")
                         )
                         if current_price >= target_price:
-                            print(
-                                f"🚨 {symbol} 첫 진입가 대비 +{config.REENTRY_RISE_PCT}% 이상! 추가 숏 재진입 시도..."
+                            logger.warning(
+                                "%s 직전 재진입가 대비 +%s%% 이상! 추가 숏 재진입 시도... (%s/%s)",
+                                symbol,
+                                config.REENTRY_RISE_PCT,
+                                reentry_count + 1,
+                                config.REENTRY_MAX_COUNT,
                             )
                             short_entry = orders.place_short_order(symbol)
                             if short_entry:
@@ -142,21 +453,33 @@ def monitor_loop() -> None:
                                         "entry_price": se_price,
                                         "qty": se_qty,
                                         "order_id": se_id,
-                                        "tp_done": False,
-                                        "tp_order_id": None,
+                                        "filled": False,
                                     }
                                 )
-                                st["reentered"] = True
-                                print(
-                                    f"📝 {symbol} 재진입 숏 기록: price={se_price}, orderId={se_id}, qty={se_qty}"
+                                st["reentry_count"] = reentry_count + 1
+                                st["last_reentry_price"] = se_price
+                                logger.info(
+                                    "%s 재진입 숏 기록: price=%s, orderId=%s, qty=%s",
+                                    symbol,
+                                    se_price,
+                                    se_id,
+                                    se_qty,
+                                    extra={
+                                        "event": "reentry_recorded",
+                                        "symbol": symbol,
+                                        "entry_price": str(se_price),
+                                        "order_id": se_id,
+                                        "qty": str(se_qty),
+                                    },
                                 )
                                 state.save_position_state()
 
-            check_filled_and_place_tp()
+            check_filled_and_refresh_tp()
+            check_tp_filled_and_log()
 
         except KeyboardInterrupt:
-            print("\n🛑 사용자 중단 (Ctrl+C). 종료.")
+            logger.info("사용자 중단 (Ctrl+C). 종료.")
             break
         except Exception as e:
-            print(f"🔥 루프 오류: {e}")
+            logger.exception("루프 오류: %s", e)
         time.sleep(config.POLL_INTERVAL_SEC)

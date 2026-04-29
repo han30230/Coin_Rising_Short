@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from decimal import Decimal
 from typing import Any, Dict
@@ -6,6 +7,7 @@ from typing import Any, Dict
 from coin_rising_short import config
 
 position_state: Dict[str, Dict[str, Any]] = {}
+logger = logging.getLogger(__name__)
 
 
 def _sanitize_for_json(obj: Any) -> Any:
@@ -45,7 +47,7 @@ def load_position_state() -> None:
             return
         position_state = _convert_loaded_state(raw)
     except Exception as e:
-        print(f"⚠️ 상태 파일 로드 실패, 빈 상태로 시작: {e}")
+        logger.warning("상태 파일 로드 실패, 빈 상태로 시작: %s", e)
         position_state = {}
 
 
@@ -58,4 +60,4 @@ def save_position_state() -> None:
             json.dump(data, f, ensure_ascii=False, indent=2)
         os.replace(tmp, path)
     except Exception as e:
-        print(f"⚠️ 상태 파일 저장 실패: {e}")
+        logger.warning("상태 파일 저장 실패: %s", e)
