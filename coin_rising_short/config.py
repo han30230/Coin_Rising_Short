@@ -43,6 +43,9 @@ FORCE_HEDGE = (os.getenv("FORCE_HEDGE") or "false").lower() == "true"
 # 업비트 상장 코인만 거래 대상으로 제한 (기본: true)
 FILTER_UPBIT_LISTED = (os.getenv("FILTER_UPBIT_LISTED") or "true").lower() == "true"
 
+# Binance USDT-M 선물 exchangeInfo onboardDate 기준 최소 상장 경과 일수
+MIN_FUTURES_LISTING_AGE_DAYS = int(os.getenv("MIN_FUTURES_LISTING_AGE_DAYS") or "365")
+
 # 펀딩비 필터: lastFundingRate 가 이 값보다 커야 진입 허용
 # -0.005 == -0.5%
 MIN_FUNDING_RATE = Decimal(os.getenv("MIN_FUNDING_RATE") or "-0.005")

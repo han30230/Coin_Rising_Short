@@ -16,6 +16,7 @@
   - `POSITION_STATE_FILE` (기본값: `position_state.json`)
   - `TRADE_JOURNAL_FILE` (기본값: `logs/trade_journal.csv`)
   - `FILTER_UPBIT_LISTED` (`true`/`false`, 기본값: `true`)
+  - `MIN_FUTURES_LISTING_AGE_DAYS` (기본값: `365`, Binance 선물 `onboardDate` 기준)
   - `MIN_FUNDING_RATE` (기본값: `-0.005`, 즉 -0.5%)
   - `FORCE_HEDGE` (`true`/`false`, 기본값: `false`)
 
@@ -30,6 +31,7 @@ HTTP_MAX_RETRIES=5
 POSITION_STATE_FILE=position_state.json
 TRADE_JOURNAL_FILE=logs/trade_journal.csv
 FILTER_UPBIT_LISTED=true
+MIN_FUTURES_LISTING_AGE_DAYS=365
 MIN_FUNDING_RATE=-0.005
 FORCE_HEDGE=false
 ```
