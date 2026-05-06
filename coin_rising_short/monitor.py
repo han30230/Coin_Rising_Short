@@ -3,7 +3,7 @@ import time
 from decimal import Decimal
 from typing import Any, Dict, List, Tuple
 
-from coin_rising_short import client, config, orders, runtime, state, symbols, trade_journal
+from coin_rising_short import client, config, indicators, market_cap, orders, runtime, state, symbols, trade_journal
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,8 @@ def _get_funding_rate_map() -> Dict[str, Decimal]:
 def get_futures_gainers_and_top_movers(
     funding_rate_map: Dict[str, Decimal],
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    market_cap.log_mcap_filter_status_once()
+
     url = f"{config.BASE_URL_FUTURES}/fapi/v1/ticker/24hr"
     response = client._http_get(url, timeout=10)
     data = client.parse_json_response(response, "24hr ticker")
@@ -55,12 +57,40 @@ def get_futures_gainers_and_top_movers(
                 "funding_rate": funding_rate_map.get(symbol, Decimal("0")),
             }
             all_movers.append(row)
-            if (
+            passed_basic = (
                 change_pct >= config.GAINER_THRESHOLD_PCT
                 and turnover_24h >= config.MIN_VOLUME_USDT
                 and row["funding_rate"] > config.MIN_FUNDING_RATE
-            ):
-                qualified.append(row)
+            )
+            if not passed_basic:
+                continue
+
+            if config.MCAP_FILTER_ENABLED:
+                mcap_usd = market_cap.get_market_cap_usd(symbol)
+                if mcap_usd is None:
+                    logger.warning(
+                        "시가총액 조회 실패로 진입 후보 제외: symbol=%s",
+                        symbol,
+                        extra={"event": "mcap_skip_fetch_failed", "symbol": symbol},
+                    )
+                    continue
+                if mcap_usd < config.MIN_MARKET_CAP_USD:
+                    logger.info(
+                        "최소 시가총액 미달로 진입 후보 제외: symbol=%s cap_usd=%s min_usd=%s",
+                        symbol,
+                        mcap_usd,
+                        config.MIN_MARKET_CAP_USD,
+                        extra={
+                            "event": "mcap_skip_below_min",
+                            "symbol": symbol,
+                            "market_cap_usd": str(mcap_usd),
+                            "min_market_cap_usd": str(config.MIN_MARKET_CAP_USD),
+                        },
+                    )
+                    continue
+                row["market_cap_usd"] = mcap_usd
+
+            qualified.append(row)
         except Exception:
             continue
 
@@ -391,6 +421,20 @@ def monitor_loop() -> None:
                     )
 
                     if symbol not in state.position_state:
+                        if config.USE_ENTRY_INDICATOR_FILTER:
+                            ok, reason = indicators.allow_initial_short(symbol)
+                            if not ok:
+                                logger.info(
+                                    "지표 필터로 신규 진입 스킵: %s reason=%s",
+                                    symbol,
+                                    reason,
+                                    extra={
+                                        "event": "initial_entry_indicator_skipped",
+                                        "symbol": symbol,
+                                        "reason": reason,
+                                    },
+                                )
+                                continue
                         entry = orders.place_short_order(symbol)
                         if entry is not None:
                             entry_price, qty, order_id = entry
@@ -444,6 +488,20 @@ def monitor_loop() -> None:
                                 reentry_count + 1,
                                 config.REENTRY_MAX_COUNT,
                             )
+                            if config.USE_REENTRY_INDICATOR_FILTER:
+                                ok, reason = indicators.allow_reentry_short(symbol)
+                                if not ok:
+                                    logger.info(
+                                        "지표 필터로 재진입 보류: %s reason=%s",
+                                        symbol,
+                                        reason,
+                                        extra={
+                                            "event": "reentry_indicator_skipped",
+                                            "symbol": symbol,
+                                            "reason": reason,
+                                        },
+                                    )
+                                    continue
                             short_entry = orders.place_short_order(symbol)
                             if short_entry:
                                 se_price, se_qty, se_id = short_entry

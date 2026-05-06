@@ -49,3 +49,22 @@ MIN_FUTURES_LISTING_AGE_DAYS = int(os.getenv("MIN_FUTURES_LISTING_AGE_DAYS") or 
 # 펀딩비 필터: lastFundingRate 가 이 값보다 커야 진입 허용
 # -0.005 == -0.5%
 MIN_FUNDING_RATE = Decimal(os.getenv("MIN_FUNDING_RATE") or "-0.005")
+
+USE_ENTRY_INDICATOR_FILTER = (os.getenv("USE_ENTRY_INDICATOR_FILTER") or "true").lower() == "true"
+USE_REENTRY_INDICATOR_FILTER = (os.getenv("USE_REENTRY_INDICATOR_FILTER") or "true").lower() == "true"
+INDICATOR_INTERVAL = os.getenv("INDICATOR_INTERVAL") or "5m"
+INDICATOR_KLINE_LIMIT = int(os.getenv("INDICATOR_KLINE_LIMIT") or "60")
+INDICATOR_CACHE_TTL_SEC = int(os.getenv("INDICATOR_CACHE_TTL_SEC") or "60")
+
+ENTRY_RSI_THRESHOLD = Decimal(os.getenv("ENTRY_RSI_THRESHOLD") or "78")
+ENTRY_MA20_GAP_PCT = Decimal(os.getenv("ENTRY_MA20_GAP_PCT") or "1.0")
+
+REENTRY_RSI_THRESHOLD = Decimal(os.getenv("REENTRY_RSI_THRESHOLD") or "80")
+REENTRY_MA20_GAP_PCT = Decimal(os.getenv("REENTRY_MA20_GAP_PCT") or "1.0")
+REENTRY_RECENT_OVER_BARS = int(os.getenv("REENTRY_RECENT_OVER_BARS") or "5")
+
+# CoinMarketCap (선택). 키가 있으면 급등 후보에 시가총액 필터 적용
+CMC_API_KEY = (os.getenv("CMC_API_KEY") or "").strip()
+MCAP_FILTER_ENABLED = bool(CMC_API_KEY)
+MIN_MARKET_CAP_USD = Decimal(os.getenv("MIN_MARKET_CAP_USD") or "100000000")
+MCAP_CACHE_TTL_SEC = int(os.getenv("MCAP_CACHE_TTL_SEC") or "900")
