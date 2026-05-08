@@ -3,7 +3,7 @@ import time
 from decimal import Decimal
 from typing import Any, Dict, List, Tuple
 
-from coin_rising_short import client, config, indicators, market_cap, orders, runtime, state, symbols, trade_journal
+from coin_rising_short import client, config, indicators, market_cap, market_data, orders, runtime, state, symbols, trade_journal
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +95,9 @@ def get_futures_gainers_and_top_movers(
             continue
 
     qualified.sort(key=lambda x: x["change_pct"], reverse=True)
+
+    qualified = market_data.filter_by_mcap_fdv(qualified)
+
     all_movers.sort(key=lambda x: x["change_pct"], reverse=True)
     return qualified, all_movers[:3]
 

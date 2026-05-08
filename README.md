@@ -24,6 +24,11 @@
     - `MIN_MARKET_CAP_USD` (기본값: `100000000`): 최소 시가총액(USD). CMC `quote.USD.market_cap`과 비교합니다.
     - `MCAP_CACHE_TTL_SEC` (기본값: `900`): 동일 베이스 심볼에 대한 시가총액 메모리 캐시 TTL(초)입니다.
     - 조회는 **24h 급등·거래대금·펀딩비 등 기존 Binance 필터를 통과한 심볼에 대해서만** 수행됩니다. 루프마다 전 종목을 조회하지 않습니다.
+  - Mcap/FDV 필터 (선택, CoinGecko, **급등 후보 `qualified` 정렬 직후 최종 단계**)
+    - `FILTER_MCAP_FDV` (`true`/`false`, 기본값: `true`)
+    - `MIN_MCAP_FDV_RATIO` (기본값: `0.4`): `market_cap / fully_diluted_valuation` 이 값 이상인 종목만 최종 후보로 남습니다. FDV 없음·0·CoinGecko 매칭 실패 시 해당 종목은 제외됩니다.
+    - `COINGECKO_API_BASE` (기본값: `https://api.coingecko.com/api/v3`)
+    - 동일 후보 심볼 집합에 대해 메모리 캐시 TTL은 약 **30분**입니다. `coins/list`와 `coins/markets` 호출을 줄이기 위함입니다.
 
 예시:
 
@@ -43,6 +48,10 @@ FORCE_HEDGE=false
 # CMC_API_KEY=
 # MIN_MARKET_CAP_USD=100000000
 # MCAP_CACHE_TTL_SEC=900
+# Mcap/FDV (CoinGecko)
+# FILTER_MCAP_FDV=true
+# MIN_MCAP_FDV_RATIO=0.4
+# COINGECKO_API_BASE=https://api.coingecko.com/api/v3
 ```
 
 ## Logging

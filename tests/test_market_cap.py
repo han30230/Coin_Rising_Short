@@ -65,8 +65,8 @@ class TestMonitorQualifiedMcap(unittest.TestCase):
         funding = {"BTCUSDT": Decimal("0")}
 
         with patch.object(config, "MCAP_FILTER_ENABLED", True), patch.object(
-            config, "MIN_MARKET_CAP_USD", Decimal("100000000")
-        ), patch(
+            config, "FILTER_MCAP_FDV", False
+        ), patch.object(config, "MIN_MARKET_CAP_USD", Decimal("100000000")), patch(
             "coin_rising_short.monitor.market_cap.get_market_cap_usd", return_value=Decimal("50000000")
         ):
             qualified, _top = monitor.get_futures_gainers_and_top_movers(funding)
@@ -103,8 +103,10 @@ class TestMonitorQualifiedMcap(unittest.TestCase):
         cap = Decimal("150000000")
 
         with patch.object(config, "MCAP_FILTER_ENABLED", True), patch.object(
-            config, "MIN_MARKET_CAP_USD", Decimal("100000000")
-        ), patch("coin_rising_short.monitor.market_cap.get_market_cap_usd", return_value=cap):
+            config, "FILTER_MCAP_FDV", False
+        ), patch.object(config, "MIN_MARKET_CAP_USD", Decimal("100000000")), patch(
+            "coin_rising_short.monitor.market_cap.get_market_cap_usd", return_value=cap
+        ):
             qualified, _top = monitor.get_futures_gainers_and_top_movers(funding)
 
         self.assertEqual(len(qualified), 1)

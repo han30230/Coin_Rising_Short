@@ -68,3 +68,7 @@ CMC_API_KEY = (os.getenv("CMC_API_KEY") or "").strip()
 MCAP_FILTER_ENABLED = bool(CMC_API_KEY)
 MIN_MARKET_CAP_USD = Decimal(os.getenv("MIN_MARKET_CAP_USD") or "100000000")
 MCAP_CACHE_TTL_SEC = int(os.getenv("MCAP_CACHE_TTL_SEC") or "900")
+
+FILTER_MCAP_FDV = (os.getenv("FILTER_MCAP_FDV") or "true").lower() == "true"
+MIN_MCAP_FDV_RATIO = Decimal(os.getenv("MIN_MCAP_FDV_RATIO") or "0.4")
+COINGECKO_API_BASE = os.getenv("COINGECKO_API_BASE") or "https://api.coingecko.com/api/v3"
