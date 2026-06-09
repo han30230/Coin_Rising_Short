@@ -279,6 +279,50 @@ def place_take_profit_order(
         return None
 
 
+def close_short_position(symbol: str, qty: Decimal) -> Optional[int]:
+    """숏 포지션 시장가 청산 (reduceOnly)."""
+    try:
+        _, qty_step, min_qty, _ = filters.get_price_step_and_qty_step(symbol)
+        eff_qty = filters.round_step_floor(qty, qty_step)
+        if eff_qty < min_qty:
+            logger.warning("청산 최소 수량 미달: %s < %s", eff_qty, min_qty)
+            return None
+        params: dict = {
+            "symbol": symbol,
+            "side": "BUY",
+            "type": "MARKET",
+            "quantity": str(eff_qty),
+            "reduceOnly": "true",
+        }
+        if runtime.IS_HEDGE:
+            params["positionSide"] = "SHORT"
+        r = client.signed_request("POST", "/fapi/v1/order", params)
+        try:
+            data = r.json() if r.text else {}
+        except Exception:
+            data = {}
+        if r.status_code == 200 and isinstance(data, dict) and "orderId" in data:
+            order_id = int(data["orderId"])
+            logger.info(
+                "숏 청산 주문: %s qty=%s orderId=%s",
+                symbol,
+                eff_qty,
+                order_id,
+                extra={
+                    "event": "short_close_placed",
+                    "symbol": symbol,
+                    "order_id": order_id,
+                    "qty": str(eff_qty),
+                },
+            )
+            return order_id
+        logger.warning("숏 청산 실패: %s / %s", symbol, data)
+        return None
+    except Exception as e:
+        logger.exception("숏 청산 예외: %s", e, extra={"symbol": symbol})
+        return None
+
+
 def place_short_order(
     symbol: str, notional_usdt: Optional[Decimal] = None
 ) -> Optional[Tuple[Decimal, Decimal, int]]:

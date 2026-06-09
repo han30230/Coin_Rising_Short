@@ -4,7 +4,7 @@ import os
 from decimal import Decimal
 from typing import Any, Dict
 
-from coin_rising_short import config
+from coin_rising_short import config, runtime
 
 position_state: Dict[str, Dict[str, Any]] = {}
 logger = logging.getLogger(__name__)
@@ -61,3 +61,54 @@ def save_position_state() -> None:
         os.replace(tmp, path)
     except Exception as e:
         logger.warning("상태 파일 저장 실패: %s", e)
+
+
+def load_qualified_watch() -> None:
+    """재시작 후 ST 감시 목록·last_direction 복원."""
+    path = config.SUPERTREND_WATCH_STATE_PATH
+    if not os.path.isfile(path):
+        return
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        if not isinstance(raw, dict):
+            return
+        restored = 0
+        for symbol, entry in raw.items():
+            if symbol in position_state:
+                continue
+            if not isinstance(entry, dict):
+                continue
+            last_direction = entry.get("last_direction")
+            if last_direction is not None:
+                try:
+                    last_direction = int(last_direction)
+                except (TypeError, ValueError):
+                    last_direction = None
+            runtime.QUALIFIED_WATCH[symbol] = {
+                "added_at": float(entry.get("added_at", 0)),
+                "last_direction": last_direction,
+            }
+            restored += 1
+        if restored:
+            logger.info(
+                "SuperTrend 감시 목록 복원: %s개 (last_direction 유지, %s)",
+                restored,
+                path,
+                extra={"event": "supertrend_watch_restored", "count": restored},
+            )
+    except Exception as e:
+        logger.warning("ST 감시 파일 로드 실패: %s", e)
+
+
+def save_qualified_watch() -> None:
+    if not config.USE_SUPERTREND_ENTRY:
+        return
+    try:
+        path = config.SUPERTREND_WATCH_STATE_PATH
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(runtime.QUALIFIED_WATCH, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    except Exception as e:
+        logger.warning("ST 감시 파일 저장 실패: %s", e)

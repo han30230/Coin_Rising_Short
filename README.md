@@ -1,71 +1,50 @@
-# Coin Auto Trading
+# Coin Auto Trading (Binance)
 
-자동매매 실행 진입점과 전략 코드를 포함한 프로젝트입니다.
+Binance USDT-M 선물 급등 숏 전략 봇입니다. Bybit 봇(`Coin_auto_trading_bybit`)과 동일한 전략·멀티 계정 구조를 사용합니다.
+
+## 전략 요약
+
+| 항목 | 기본값 |
+|------|--------|
+| 급등 스캔 | +25%, 24h 거래대금 100k USDT |
+| ST 감시 | 상위 30개, sticky (진입/포지션 시에만 제거) |
+| 진입 | 4h SuperTrend = -1, ~50 USDT limit +1%, 5x |
+| 청산 | 4h SuperTrend → 1, 시장가 + 재시도 |
+| 재진입 | OFF |
+| 최대 포지션 | 봇 추적 50개 (수동 포지션 제외) |
 
 ## Environment Variables
 
-`.env` 파일을 프로젝트 루트에 두고 아래 키를 설정합니다.
+`.env` 파일을 프로젝트 루트에 두고 API 키를 설정합니다. 예시는 `.env.example`을 참고하세요.
 
-- 필수
-  - `BINANCE_API_KEY`
-  - `BINANCE_SECRET`
-- 선택
-  - `BINANCE_ENV` (`mainnet` 또는 `testnet`, 기본값: `mainnet`)
-  - `LEVERAGE` (기본값: `5`)
-  - `HTTP_MAX_RETRIES` (기본값: `5`)
-  - `POSITION_STATE_FILE` (기본값: `position_state.json`)
-  - `TRADE_JOURNAL_FILE` (기본값: `logs/trade_journal.csv`)
-  - `FILTER_UPBIT_LISTED` (`true`/`false`, 기본값: `true`)
-  - `MIN_FUTURES_LISTING_AGE_DAYS` (기본값: `365`, Binance 선물 `onboardDate` 기준)
-  - `MIN_FUNDING_RATE` (기본값: `-0.005`, 즉 -0.5%)
-  - `FORCE_HEDGE` (`true`/`false`, 기본값: `false`)
-  - 시가총액 필터 (선택, CoinMarketCap)
-    - `CMC_API_KEY`: CoinMarketCap Pro API 키. **설정하면** 급등 후보에 시가총액 조건이 추가됩니다. 비우면 비활성화되며 기존 Binance 조건만으로 동작합니다.
-    - `MIN_MARKET_CAP_USD` (기본값: `100000000`): 최소 시가총액(USD). CMC `quote.USD.market_cap`과 비교합니다.
-    - `MCAP_CACHE_TTL_SEC` (기본값: `900`): 동일 베이스 심볼에 대한 시가총액 메모리 캐시 TTL(초)입니다.
-    - 조회는 **24h 급등·거래대금·펀딩비 등 기존 Binance 필터를 통과한 심볼에 대해서만** 수행됩니다. 루프마다 전 종목을 조회하지 않습니다.
-  - Mcap/FDV 필터 (선택, CoinGecko, **급등 후보 `qualified` 정렬 직후 최종 단계**)
-    - `FILTER_MCAP_FDV` (`true`/`false`, 기본값: `true`)
-    - `MIN_MCAP_FDV_RATIO` (기본값: `0.4`): `market_cap / fully_diluted_valuation` 이 값 이상인 종목만 최종 후보로 남습니다. FDV 없음·0·CoinGecko 매칭 실패 시 해당 종목은 제외됩니다.
-    - `COINGECKO_API_BASE` (기본값: `https://api.coingecko.com/api/v3`)
-    - 동일 후보 심볼 집합에 대해 메모리 캐시 TTL은 약 **30분**입니다. `coins/list`와 `coins/markets` 호출을 줄이기 위함입니다.
-
-예시:
-
-```env
-BINANCE_API_KEY=your_api_key
-BINANCE_SECRET=your_secret
-BINANCE_ENV=mainnet
-LEVERAGE=5
-HTTP_MAX_RETRIES=5
-POSITION_STATE_FILE=position_state.json
-TRADE_JOURNAL_FILE=logs/trade_journal.csv
-FILTER_UPBIT_LISTED=true
-MIN_FUTURES_LISTING_AGE_DAYS=365
-MIN_FUNDING_RATE=-0.005
-FORCE_HEDGE=false
-# 선택: 시가총액 (CMC). 키 없으면 필터 비활성화
-# CMC_API_KEY=
-# MIN_MARKET_CAP_USD=100000000
-# MCAP_CACHE_TTL_SEC=900
-# Mcap/FDV (CoinGecko)
-# FILTER_MCAP_FDV=true
-# MIN_MCAP_FDV_RATIO=0.4
-# COINGECKO_API_BASE=https://api.coingecko.com/api/v3
-```
-
-## Logging
-
-- 로그 이벤트 규칙 문서: `docs/logging_events.md`
+- 필수: `BINANCE_API_KEY` / `BINANCE_SECRET` (또는 `BINANCE_API_KEY_SH` / `BINANCE_SECRET_SH`)
+- 멀티 계정: `BINANCE_API_KEY_JK`, `BINANCE_API_KEY_JK_2` 등
 
 ## Run
 
-- 루트에서 실행:
-  - `python Binance_SH_1.py`
+```bash
+# sh 계정 (기본)
+python Binance_SH_1.py
+
+# jk / jk2 계정 (별도 터미널)
+python run_binance_account.py jk
+python run_binance_account.py jk2
+```
+
+계정마다 `state/<계정>/`, `logs/<계정>/` 가 분리됩니다. **같은 계정을 두 터미널에서 동시에 실행하지 마세요.**
+
+## Logging
+
+- 로그 이벤트 규칙: `docs/logging_events.md`
 
 ## Trade Journal Migration
 
-- 기존 영문 헤더 거래일지를 한글 헤더로 변환:
-  - `python migrate_trade_journal.py`
-- 백업 파일:
-  - `logs/trade_journal.backup.csv`
+```bash
+python migrate_trade_journal.py
+```
+
+## Tests
+
+```bash
+python -m unittest discover -s tests -v
+```

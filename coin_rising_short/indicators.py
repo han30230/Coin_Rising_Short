@@ -3,13 +3,13 @@ import time
 from decimal import Decimal
 from typing import List, Optional, Tuple
 
-from coin_rising_short import client, config
+from coin_rising_short import client, config, runtime
 
 logger = logging.getLogger(__name__)
 
 _RSI_PERIOD = 14
 
-_kline_cache: dict[str, tuple[float, List[Decimal]]] = {}
+_ohlc_cache: dict[str, tuple[float, dict[str, List[Decimal]]]] = {}
 
 
 def _mean(values: List[Decimal]) -> Decimal:
@@ -80,19 +80,27 @@ def _ma5_slope_turns_down(closes: List[Decimal]) -> bool:
     return slope_prev > 0 and slope_now < 0
 
 
-def _get_closed_closes(symbol: str) -> Tuple[Optional[List[Decimal]], str]:
+def _get_closed_ohlc(
+    symbol: str,
+    interval: Optional[str] = None,
+    limit: Optional[int] = None,
+) -> Tuple[Optional[dict[str, List[Decimal]]], str]:
+    iv = interval or config.INDICATOR_INTERVAL
+    if limit is None:
+        limit = (
+            config.SUPERTREND_KLINE_LIMIT
+            if iv == config.SUPERTREND_INTERVAL
+            else config.INDICATOR_KLINE_LIMIT
+        )
+    cache_key = f"{symbol}:{iv}"
     now = time.time()
-    cached = _kline_cache.get(symbol)
+    cached = _ohlc_cache.get(cache_key)
     if cached is not None and now - cached[0] < config.INDICATOR_CACHE_TTL_SEC:
         return cached[1], ""
 
-    url = f"{config.BASE_URL_FUTURES}/fapi/v1/klines"
-    params = {
-        "symbol": symbol,
-        "interval": config.INDICATOR_INTERVAL,
-        "limit": str(config.INDICATOR_KLINE_LIMIT),
-    }
     try:
+        url = f"{config.BASE_URL_FUTURES}/fapi/v1/klines"
+        params = {"symbol": symbol, "interval": iv, "limit": str(limit)}
         resp = client._http_get(url, params=params, timeout=10)
         data = client.parse_json_response(resp, "futures klines")
     except Exception as exc:
@@ -106,15 +114,19 @@ def _get_closed_closes(symbol: str) -> Tuple[Optional[List[Decimal]], str]:
         return None, msg
 
     rows = data[:-1]
+    highs: List[Decimal] = []
+    lows: List[Decimal] = []
     closes: List[Decimal] = []
     try:
         for row in rows:
             if not isinstance(row, (list, tuple)) or len(row) < 5:
                 continue
+            highs.append(Decimal(str(row[2])))
+            lows.append(Decimal(str(row[3])))
             closes.append(Decimal(str(row[4])))
     except Exception as exc:
-        msg = f"지표 계산 실패: close 변환 오류: {exc}"
-        logger.warning("%s symbol=%s", msg, symbol, extra={"event": "indicator_close_parse_failed", "symbol": symbol})
+        msg = f"지표 계산 실패: OHLC 변환 오류: {exc}"
+        logger.warning("%s symbol=%s", msg, symbol, extra={"event": "indicator_ohlc_parse_failed", "symbol": symbol})
         return None, msg
 
     if not closes:
@@ -122,8 +134,180 @@ def _get_closed_closes(symbol: str) -> Tuple[Optional[List[Decimal]], str]:
         logger.warning("%s symbol=%s", msg, symbol, extra={"event": "indicator_no_closed_candles", "symbol": symbol})
         return None, msg
 
-    _kline_cache[symbol] = (now, closes)
-    return closes, ""
+    ohlc = {"highs": highs, "lows": lows, "closes": closes}
+    _ohlc_cache[cache_key] = (now, ohlc)
+    return ohlc, ""
+
+
+def _get_closed_closes(symbol: str) -> Tuple[Optional[List[Decimal]], str]:
+    ohlc, err = _get_closed_ohlc(symbol)
+    if ohlc is None:
+        return None, err
+    return ohlc["closes"], ""
+
+
+def _true_range(
+    high: Decimal, low: Decimal, prev_close: Decimal
+) -> Decimal:
+    a = high - low
+    b = abs(high - prev_close)
+    c = abs(low - prev_close)
+    return max(a, b, c)
+
+
+def _supertrend_src(
+    highs: List[Decimal], lows: List[Decimal], closes: List[Decimal], i: int
+) -> Decimal:
+    src = config.SUPERTREND_SOURCE
+    if src == "hl2":
+        return (highs[i] + lows[i]) / Decimal("2")
+    if src == "close":
+        return closes[i]
+    return (highs[i] + lows[i] + closes[i]) / Decimal("3")
+
+
+def _pine_atr_early(
+    highs: List[Decimal], lows: List[Decimal], closes: List[Decimal], period: int
+) -> List[Optional[Decimal]]:
+    """TV Pine: barCount < period 이면 누적평균, 이후 (prev*(period-1)+tr)/period."""
+    n = len(closes)
+    out: List[Optional[Decimal]] = [None] * n
+    prev_atr: Optional[Decimal] = None
+    p = Decimal(str(period))
+
+    for i in range(1, n):
+        tr = _true_range(highs[i], lows[i], closes[i - 1])
+        bar_count = i
+        if prev_atr is None:
+            prev_atr = tr
+        elif bar_count < period:
+            prev_atr = (prev_atr * Decimal(bar_count - 1) + tr) / Decimal(bar_count)
+        else:
+            prev_atr = (prev_atr * (p - Decimal("1")) + tr) / p
+        out[i] = prev_atr
+    return out
+
+
+def _supertrend_directions(
+    highs: List[Decimal],
+    lows: List[Decimal],
+    closes: List[Decimal],
+    period: int,
+    factor: Decimal,
+) -> List[int]:
+    """
+    TradingView Supertrend Only Strategy Pine 로직.
+    1=상승, -1=하락(숏). 닫힌 봉 기준 시계열.
+    """
+    n = len(closes)
+    atr_s = _pine_atr_early(highs, lows, closes, period)
+    up_band: List[Decimal] = [Decimal("0")] * n
+    dn_band: List[Decimal] = [Decimal("0")] * n
+    direction: List[int] = [1] * n
+
+    for i in range(n):
+        atr = atr_s[i]
+        if atr is None:
+            continue
+        src = _supertrend_src(highs, lows, closes, i)
+        basic_up = src - factor * atr
+        basic_dn = src + factor * atr
+
+        if i == 0:
+            up_band[i] = basic_up
+            dn_band[i] = basic_dn
+            direction[i] = 1
+            continue
+
+        up1 = up_band[i - 1]
+        dn1 = dn_band[i - 1]
+        up_band[i] = max(basic_up, up1) if closes[i - 1] > up1 else basic_up
+        dn_band[i] = min(basic_dn, dn1) if closes[i - 1] < dn1 else basic_dn
+
+        prev_trend = direction[i - 1]
+        if prev_trend == -1 and closes[i] > dn1:
+            direction[i] = 1
+        elif prev_trend == 1 and closes[i] < up1:
+            direction[i] = -1
+        else:
+            direction[i] = prev_trend
+
+    return direction
+
+
+def get_supertrend_last_direction(symbol: str) -> Tuple[Optional[int], str]:
+    """최근 닫힌 4h 봉 SuperTrend 방향 (1=상승, -1=하락)."""
+    ohlc, err = _get_closed_ohlc(
+        symbol,
+        interval=config.SUPERTREND_INTERVAL,
+        limit=config.SUPERTREND_KLINE_LIMIT,
+    )
+    if ohlc is None:
+        return None, err or "OHLC 없음"
+    highs = ohlc["highs"]
+    lows = ohlc["lows"]
+    closes = ohlc["closes"]
+    period = config.SUPERTREND_ATR_PERIOD
+    if len(closes) < period + 5:
+        return None, f"캔들 부족: {len(closes)}"
+    directions = _supertrend_directions(
+        highs, lows, closes, period, config.SUPERTREND_FACTOR
+    )
+    return directions[-1], ""
+
+
+def evaluate_supertrend_signal(
+    symbol: str,
+    target_direction: int,
+    last_seen: Optional[int],
+) -> Tuple[bool, str, Optional[int]]:
+    """
+    target_direction: -1 숏 진입, 1 롱(청산) 신호.
+    last_seen와 같으면 중복 신호로 False.
+    """
+    curr_d, err = get_supertrend_last_direction(symbol)
+    if curr_d is None:
+        return False, err, None
+    if curr_d != target_direction:
+        label = "하락(-1)" if target_direction == -1 else "상승(1)"
+        return False, (
+            f"ST 대기 {config.SUPERTREND_INTERVAL} (curr={curr_d}, need={label})"
+        ), curr_d
+    if last_seen == target_direction:
+        return False, (
+            f"ST 유지 {config.SUPERTREND_INTERVAL} (이미 처리됨, dir={curr_d})"
+        ), curr_d
+    tag = "flip" if last_seen == -target_direction else "trend"
+    side = "short" if target_direction == -1 else "long"
+    return True, (
+        f"supertrend_{side}_{tag}({config.SUPERTREND_INTERVAL} "
+        f"p={config.SUPERTREND_ATR_PERIOD} f={config.SUPERTREND_FACTOR})"
+    ), curr_d
+
+
+def is_supertrend_short_signal(symbol: str) -> Tuple[bool, str]:
+    """
+    감시 등록 후 현재 닫힌 4h 봉 SuperTrend가 하락(-1)이면 True.
+    """
+    watch = runtime.QUALIFIED_WATCH.get(symbol)
+    curr_d, err = get_supertrend_last_direction(symbol)
+    if curr_d is None:
+        return False, err
+    if watch is not None:
+        watch["last_direction"] = curr_d
+    if curr_d != -1:
+        return False, (
+            f"ST 대기 {config.SUPERTREND_INTERVAL} (curr={curr_d}, need=-1)"
+        )
+    return True, (
+        f"supertrend_short({config.SUPERTREND_INTERVAL} "
+        f"p={config.SUPERTREND_ATR_PERIOD} f={config.SUPERTREND_FACTOR})"
+    )
+
+
+def is_supertrend_long_exit_signal(symbol: str, last_seen: Optional[int]) -> Tuple[bool, str]:
+    ok, reason, _curr_d = evaluate_supertrend_signal(symbol, 1, last_seen)
+    return ok, reason
 
 
 def allow_initial_short(symbol: str) -> Tuple[bool, str]:

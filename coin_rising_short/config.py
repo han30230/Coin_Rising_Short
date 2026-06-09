@@ -9,21 +9,23 @@ _PROJECT_ROOT = os.path.dirname(_PACKAGE_ROOT)
 
 load_dotenv(dotenv_path=os.path.join(_PROJECT_ROOT, ".env"))
 
-API_KEY = os.getenv("BINANCE_API_KEY")
-API_SECRET = os.getenv("BINANCE_SECRET")
+API_KEY = os.getenv("BINANCE_API_KEY_SH") or os.getenv("BINANCE_API_KEY")
+API_SECRET = os.getenv("BINANCE_SECRET_SH") or os.getenv("BINANCE_SECRET")
 
 ENV = (os.getenv("BINANCE_ENV") or "mainnet").lower()
 BASE_URL_FUTURES = "https://fapi.binance.com" if ENV == "mainnet" else "https://testnet.binancefuture.com"
 BASE_URL_SPOT = "https://api.binance.com" if ENV == "mainnet" else "https://testnet.binance.vision"
 
 if not API_KEY or not API_SECRET:
-    raise Exception("❌ .env에서 API 키를 불러오지 못했습니다!")
+    raise Exception("❌ .env에서 Binance API 키를 불러오지 못했습니다! (BINANCE_API_KEY_SH / BINANCE_SECRET_SH)")
 
 POSITION_USDT = Decimal("50")
 PREMIUM_PCT = Decimal("0.01")
 DISCOUNT_PCT = Decimal("0.01")
-GAINER_THRESHOLD_PCT = Decimal("20")
-MIN_VOLUME_USDT = Decimal("1_000_000")
+GAINER_THRESHOLD_PCT = Decimal(os.getenv("GAINER_THRESHOLD_PCT") or "25")
+QUALIFIED_WATCH_TOP_N = int(os.getenv("QUALIFIED_WATCH_TOP_N") or "30")
+MIN_VOLUME_USDT = Decimal(os.getenv("MIN_VOLUME_USDT") or "100000")
+USE_REENTRY = (os.getenv("USE_REENTRY") or "false").lower() == "true"
 REENTRY_RISE_PCT = Decimal("50")
 REENTRY_MAX_COUNT = 4
 TAKE_PROFIT_PCT = Decimal("10")
@@ -38,19 +40,19 @@ POSITION_STATE_PATH = os.getenv("POSITION_STATE_FILE") or os.path.join(
 TRADE_JOURNAL_PATH = os.getenv("TRADE_JOURNAL_FILE") or os.path.join(
     _PROJECT_ROOT, "logs", "trade_journal.csv"
 )
+MAX_CONCURRENT_POSITIONS = int(os.getenv("MAX_CONCURRENT_POSITIONS") or "50")
+EXIT_CLOSE_MAX_RETRIES = int(os.getenv("EXIT_CLOSE_MAX_RETRIES") or "5")
 FORCE_HEDGE = (os.getenv("FORCE_HEDGE") or "false").lower() == "true"
 
-# 업비트 상장 코인만 거래 대상으로 제한 (기본: true)
-FILTER_UPBIT_LISTED = (os.getenv("FILTER_UPBIT_LISTED") or "true").lower() == "true"
+FILTER_UPBIT_LISTED = (os.getenv("FILTER_UPBIT_LISTED") or "false").lower() == "true"
+FILTER_SPOT_COEXIST = (os.getenv("FILTER_SPOT_COEXIST") or "false").lower() == "true"
+FILTER_FUTURES_LISTING_AGE = (os.getenv("FILTER_FUTURES_LISTING_AGE") or "false").lower() == "true"
 
-# Binance USDT-M 선물 exchangeInfo onboardDate 기준 최소 상장 경과 일수
 MIN_FUTURES_LISTING_AGE_DAYS = int(os.getenv("MIN_FUTURES_LISTING_AGE_DAYS") or "365")
 
-# 펀딩비 필터: lastFundingRate 가 이 값보다 커야 진입 허용
-# -0.005 == -0.5%
 MIN_FUNDING_RATE = Decimal(os.getenv("MIN_FUNDING_RATE") or "-0.005")
 
-USE_ENTRY_INDICATOR_FILTER = (os.getenv("USE_ENTRY_INDICATOR_FILTER") or "true").lower() == "true"
+USE_ENTRY_INDICATOR_FILTER = (os.getenv("USE_ENTRY_INDICATOR_FILTER") or "false").lower() == "true"
 USE_REENTRY_INDICATOR_FILTER = (os.getenv("USE_REENTRY_INDICATOR_FILTER") or "true").lower() == "true"
 INDICATOR_INTERVAL = os.getenv("INDICATOR_INTERVAL") or "5m"
 INDICATOR_KLINE_LIMIT = int(os.getenv("INDICATOR_KLINE_LIMIT") or "60")
@@ -63,12 +65,25 @@ REENTRY_RSI_THRESHOLD = Decimal(os.getenv("REENTRY_RSI_THRESHOLD") or "80")
 REENTRY_MA20_GAP_PCT = Decimal(os.getenv("REENTRY_MA20_GAP_PCT") or "1.0")
 REENTRY_RECENT_OVER_BARS = int(os.getenv("REENTRY_RECENT_OVER_BARS") or "5")
 
-# CoinMarketCap (선택). 키가 있으면 급등 후보에 시가총액 필터 적용
+USE_SUPERTREND_ENTRY = (os.getenv("USE_SUPERTREND_ENTRY") or "true").lower() == "true"
+SUPERTREND_INTERVAL = os.getenv("SUPERTREND_INTERVAL") or "4h"
+SUPERTREND_ATR_PERIOD = int(os.getenv("SUPERTREND_ATR_PERIOD") or "4")
+SUPERTREND_FACTOR = Decimal(os.getenv("SUPERTREND_FACTOR") or "7")
+SUPERTREND_SOURCE = (os.getenv("SUPERTREND_SOURCE") or "hl2").lower()
+SUPERTREND_KLINE_LIMIT = int(os.getenv("SUPERTREND_KLINE_LIMIT") or "100")
+SUPERTREND_WATCH_STATE_PATH = os.getenv("SUPERTREND_WATCH_STATE_FILE") or os.path.join(
+    _PROJECT_ROOT, "supertrend_watch.json"
+)
+USE_SUPERTREND_EXIT = (os.getenv("USE_SUPERTREND_EXIT") or "true").lower() == "true"
+USE_FIXED_TP = (os.getenv("USE_FIXED_TP") or "false").lower() == "true"
+
 CMC_API_KEY = (os.getenv("CMC_API_KEY") or "").strip()
-MCAP_FILTER_ENABLED = bool(CMC_API_KEY)
-MIN_MARKET_CAP_USD = Decimal(os.getenv("MIN_MARKET_CAP_USD") or "100000000")
+USE_MCAP_FILTER = (os.getenv("USE_MCAP_FILTER") or "false").lower() == "true"
+MCAP_FILTER_ENABLED = USE_MCAP_FILTER and bool(CMC_API_KEY)
+MCAP_FAIL_OPEN = (os.getenv("MCAP_FAIL_OPEN") or "true").lower() == "true"
+MIN_MARKET_CAP_USD = Decimal(os.getenv("MIN_MARKET_CAP_USD") or "1000000")
 MCAP_CACHE_TTL_SEC = int(os.getenv("MCAP_CACHE_TTL_SEC") or "900")
 
-FILTER_MCAP_FDV = (os.getenv("FILTER_MCAP_FDV") or "true").lower() == "true"
+FILTER_MCAP_FDV = (os.getenv("FILTER_MCAP_FDV") or "false").lower() == "true"
 MIN_MCAP_FDV_RATIO = Decimal(os.getenv("MIN_MCAP_FDV_RATIO") or "0.4")
 COINGECKO_API_BASE = os.getenv("COINGECKO_API_BASE") or "https://api.coingecko.com/api/v3"

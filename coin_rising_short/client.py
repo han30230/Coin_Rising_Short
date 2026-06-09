@@ -144,3 +144,20 @@ def parse_json_response(response: requests.Response, context: str) -> Any:
         return response.json()
     except Exception as exc:
         raise RuntimeError(f"{context} JSON 파싱 실패: {exc}") from exc
+
+
+def get_open_orders() -> list:
+    r = signed_request("GET", "/fapi/v1/openOrders", {})
+    if r.status_code != 200:
+        logger.warning("openOrders 조회 실패: %s %s", r.status_code, r.text)
+        return []
+    raw = parse_json_response(r, "openOrders")
+    return raw if isinstance(raw, list) else []
+
+
+def get_position_risk() -> list:
+    r = signed_request("GET", "/fapi/v2/positionRisk", {})
+    if r.status_code != 200:
+        raise RuntimeError(f"positionRisk HTTP {r.status_code}: {r.text}")
+    raw = parse_json_response(r, "positionRisk")
+    return raw if isinstance(raw, list) else []
