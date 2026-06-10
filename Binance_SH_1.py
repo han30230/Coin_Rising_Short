@@ -4,7 +4,18 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 ROOT = Path(__file__).resolve().parent
+load_dotenv(ROOT / ".env", override=False)
+
+if not os.getenv("BOT_API_KEY"):
+    os.environ["BOT_API_KEY"] = (
+        os.getenv("BINANCE_API_KEY_SH") or os.getenv("BINANCE_API_KEY") or ""
+    )
+    os.environ["BOT_API_SECRET"] = (
+        os.getenv("BINANCE_SECRET_SH") or os.getenv("BINANCE_SECRET") or ""
+    )
 
 if not os.getenv("POSITION_STATE_FILE"):
     state_dir = ROOT / "state" / "sh"

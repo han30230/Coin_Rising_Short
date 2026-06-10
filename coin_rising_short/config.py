@@ -7,10 +7,18 @@ getcontext().prec = 16
 _PACKAGE_ROOT = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(_PACKAGE_ROOT)
 
-load_dotenv(dotenv_path=os.path.join(_PROJECT_ROOT, ".env"))
+load_dotenv(dotenv_path=os.path.join(_PROJECT_ROOT, ".env"), override=False)
 
-API_KEY = os.getenv("BINANCE_API_KEY_SH") or os.getenv("BINANCE_API_KEY")
-API_SECRET = os.getenv("BINANCE_SECRET_SH") or os.getenv("BINANCE_SECRET")
+API_KEY = (
+    os.getenv("BOT_API_KEY")
+    or os.getenv("BINANCE_API_KEY_SH")
+    or os.getenv("BINANCE_API_KEY")
+)
+API_SECRET = (
+    os.getenv("BOT_API_SECRET")
+    or os.getenv("BINANCE_SECRET_SH")
+    or os.getenv("BINANCE_SECRET")
+)
 
 ENV = (os.getenv("BINANCE_ENV") or "mainnet").lower()
 BASE_URL_FUTURES = "https://fapi.binance.com" if ENV == "mainnet" else "https://testnet.binancefuture.com"
