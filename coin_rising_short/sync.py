@@ -7,13 +7,6 @@ from coin_rising_short import client, config, orders, positions, runtime, state
 logger = logging.getLogger(__name__)
 
 
-def _valid_order_id(oid) -> bool:
-    if oid is None:
-        return False
-    s = str(oid).strip()
-    return bool(s) and s != "0"
-
-
 def _sync_order_state() -> bool:
     """저장된 주문 ID와 거래소 open/filled 상태 맞춤."""
     if not state.position_state:
@@ -25,7 +18,7 @@ def _sync_order_state() -> bool:
         logger.warning("openOrders 조회 실패: %s", exc)
         orders_list = []
 
-    open_map = {(o["symbol"], str(o["orderId"])): o for o in orders_list}
+    open_map = {(o["symbol"], int(o["orderId"])): o for o in orders_list}
     remove_symbols: List[str] = []
     dirty = False
 
@@ -55,9 +48,9 @@ def _sync_order_state() -> bool:
             entry.setdefault("closed", False)
             entry.setdefault("entry_logged", False)
             oid = entry.get("order_id")
-            if not _valid_order_id(oid):
+            if not oid or int(oid) == 0:
                 continue
-            oid = str(oid)
+            oid = int(oid)
             key = (symbol, oid)
             if key in open_map:
                 o = open_map[key]
@@ -100,7 +93,7 @@ def _sync_order_state() -> bool:
 
         tp_oid = st.get("tp_order_id")
         if tp_oid:
-            tp_detail = orders.get_order_detail(symbol, tp_oid)
+            tp_detail = orders.get_order_detail(symbol, int(tp_oid))
             if tp_detail:
                 tp_status = tp_detail.get("status")
                 if tp_status == "FILLED":
@@ -117,7 +110,7 @@ def _sync_order_state() -> bool:
 
         exit_oid = st.get("exit_order_id")
         if exit_oid:
-            ex_detail = orders.get_order_detail(symbol, exit_oid)
+            ex_detail = orders.get_order_detail(symbol, int(exit_oid))
             ex_status = ex_detail.get("status") if ex_detail else None
             if ex_status == "FILLED":
                 st["tp_exit_logged"] = True
@@ -227,95 +220,11 @@ def reconcile_positions_with_exchange(
     return dirty
 
 
-def recover_orphan_entry_orders() -> bool:
-    """거래소 미체결 숏 주문이 로컬에 없으면 추적 등록 (중복 주문 방지)."""
-    dirty = False
-    try:
-        order_list = client.get_open_orders()
-    except Exception as exc:
-        logger.warning("고아 진입 주문 복구 실패(openOrders): %s", exc)
-        return False
-
-    for o in order_list:
-        sym = o.get("symbol")
-        if not isinstance(sym, str):
-            continue
-        if str(o.get("side", "")).upper() != "SELL":
-            continue
-        status = str(o.get("status", "")).upper()
-        if status not in ("NEW", "PARTIALLY_FILLED"):
-            continue
-        oid = client.as_order_id(o.get("orderId"))
-        if not oid:
-            continue
-
-        st = state.position_state.get(sym)
-        if st:
-            known = any(client.as_order_id(e.get("order_id")) == oid for e in st.get("entries", []))
-            if known:
-                continue
-            if any(not e.get("closed") and not e.get("filled") for e in st.get("entries", [])):
-                logger.warning(
-                    "다른 미체결 엔트리 존재 — 추가 복구 스킵: %s orderId=%s",
-                    sym,
-                    oid,
-                )
-                continue
-
-        try:
-            price = Decimal(str(o.get("price") or o.get("avgPrice") or "0"))
-            qty = Decimal(
-                str(o.get("origQty") or o.get("qty") or o.get("executedQty") or "0")
-            )
-        except Exception:
-            price, qty = Decimal("0"), Decimal("0")
-
-        entry = {
-            "direction": "SHORT",
-            "entry_price": price,
-            "qty": qty,
-            "order_id": oid,
-            "filled": False,
-            "closed": False,
-            "entry_logged": False,
-        }
-        if st is None:
-            state.position_state[sym] = {
-                "entry_price": price,
-                "reentry_count": 0,
-                "last_reentry_price": price,
-                "tp_order_id": None,
-                "tp_entry_price": Decimal("0"),
-                "tp_qty": Decimal("0"),
-                "tp_exit_logged": False,
-                "st_last_direction": None,
-                "exit_order_id": None,
-                "exit_pending": False,
-                "exit_retry_count": 0,
-                "entries": [entry],
-            }
-        else:
-            st.setdefault("entries", []).append(entry)
-        runtime.QUALIFIED_WATCH.pop(sym, None)
-        dirty = True
-        logger.info(
-            "미체결 숏 주문 로컬 복구: %s orderId=%s price=%s qty=%s",
-            sym,
-            oid,
-            price,
-            qty,
-            extra={"event": "orphan_entry_recovered", "symbol": sym, "order_id": oid},
-        )
-    return dirty
-
-
 def sync_state_with_exchange() -> None:
     state.load_position_state()
     logger.info("거래소와 상태 동기화 중...", extra={"event": "sync_started"})
 
-    dirty = recover_orphan_entry_orders()
-    if _sync_order_state():
-        dirty = True
+    dirty = _sync_order_state()
     if reconcile_positions_with_exchange():
         dirty = True
 

@@ -102,13 +102,11 @@ def run() -> None:
     _configure_logging()
     logger = logging.getLogger(__name__)
     account = os.getenv("BOT_ACCOUNT", "default")
-    key_hint = (config.API_KEY[:4] + "…") if config.API_KEY and len(config.API_KEY) >= 4 else "?"
     logger.info(
-        "Binance Futures 급등 숏 봇 시작 (ENV=%s, account=%s, api_key=%s)",
+        "Binance Futures 급등 숏 봇 시작 (ENV=%s, account=%s)",
         config.ENV,
         account,
-        key_hint,
-        extra={"event": "startup", "account": account, "api_key_hint": key_hint},
+        extra={"event": "startup", "account": account},
     )
     client.refresh_time_offset()
     logger.info(

@@ -2,16 +2,8 @@ import hashlib
 import hmac
 import logging
 import time
-from typing import Any, Optional, Union
+from typing import Any, Optional
 from urllib.parse import urlencode
-
-OrderId = Union[int, str]
-
-
-def as_order_id(order_id: Optional[OrderId]) -> str:
-    if order_id is None:
-        return ""
-    return str(order_id).strip()
 
 import requests
 

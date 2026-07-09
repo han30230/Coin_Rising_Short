@@ -292,10 +292,11 @@ def close_short_position(symbol: str, qty: Decimal) -> Optional[int]:
             "side": "BUY",
             "type": "MARKET",
             "quantity": str(eff_qty),
-            "reduceOnly": "true",
         }
         if runtime.IS_HEDGE:
             params["positionSide"] = "SHORT"
+        else:
+            params["reduceOnly"] = "true"
         r = client.signed_request("POST", "/fapi/v1/order", params)
         try:
             data = r.json() if r.text else {}
