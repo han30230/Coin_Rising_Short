@@ -130,6 +130,107 @@ def clear_symbol_state(
     st["tp_exit_logged"] = True
 
 
+def st_last_direction_for_recovery(symbol: str) -> int:
+    """재시작 후 ST 청산 판단용 last_direction 초기화."""
+    from coin_rising_short import indicators
+
+    curr_d, _ = indicators.get_supertrend_last_direction(symbol)
+    if curr_d == 1:
+        return -1
+    if curr_d == -1:
+        return -1
+    return -1
+
+
+def adopt_recovered_short(
+    symbol: str,
+    ex: ExternalShort,
+    *,
+    note: str = "재시작 복구",
+) -> None:
+    """거래소 숏을 봇 관리 대상으로 복구 (ST 청산 추적 포함)."""
+    size = ex["size"]
+    avg = ex.get("avg_price") or Decimal("0")
+    if avg <= 0:
+        try:
+            resp = client._http_get(
+                f"{config.BASE_URL_FUTURES}/fapi/v1/ticker/price",
+                params={"symbol": symbol},
+                timeout=10,
+            )
+            data = client.parse_json_response(resp, f"{symbol} 가격")
+            avg = Decimal(str(data.get("price", "0")))
+        except Exception:
+            avg = Decimal("0")
+
+    state.position_state[symbol] = {
+        "entry_price": avg,
+        "reentry_count": 0,
+        "last_reentry_price": avg,
+        "tp_order_id": None,
+        "tp_entry_price": Decimal("0"),
+        "tp_qty": Decimal("0"),
+        "tp_exit_logged": False,
+        "st_last_direction": st_last_direction_for_recovery(symbol),
+        "exit_order_id": None,
+        "exit_pending": False,
+        "exit_retry_count": 0,
+        "entries": [
+            {
+                "direction": "SHORT",
+                "entry_price": avg,
+                "qty": size,
+                "order_id": 0,
+                "filled": True,
+                "closed": False,
+                "entry_logged": True,
+            }
+        ],
+    }
+    logger.info(
+        "거래소 숏 포지션 복구(%s): %s qty=%s avg=%s",
+        note,
+        symbol,
+        size,
+        avg,
+        extra={"event": "short_position_recovered", "symbol": symbol, "qty": str(size), "note": note},
+    )
+
+
+def repair_short_tracking_from_exchange(symbol: str, st: Dict[str, Any], ex: ExternalShort) -> bool:
+    """로컬 state는 있으나 체결 qty=0인데 거래소 숏이 남아 있을 때 복구."""
+    ex_qty = ex["size"]
+    ex_avg = ex.get("avg_price") or Decimal("0")
+    _, local_qty, _ = get_filled_from_state(st)
+    if ex_qty <= 0 or local_qty > 0:
+        return False
+
+    st.pop("external", None)
+    pending = [
+        e for e in st.get("entries", []) if not e.get("closed") and not e.get("filled")
+    ]
+    if pending:
+        entry = pending[0]
+        entry["filled"] = True
+        entry["closed"] = False
+        entry["qty"] = ex_qty
+        if ex_avg > 0:
+            entry["entry_price"] = ex_avg
+            st["entry_price"] = ex_avg
+        if st.get("st_last_direction") is None:
+            st["st_last_direction"] = st_last_direction_for_recovery(symbol)
+        logger.info(
+            "다운타임 중 체결 반영: %s qty=%s",
+            symbol,
+            ex_qty,
+            extra={"event": "short_fill_recovered", "symbol": symbol, "qty": str(ex_qty)},
+        )
+        return True
+
+    adopt_recovered_short(symbol, ex, note="state 불일치 복구")
+    return True
+
+
 def adopt_external_short(symbol: str, ex: ExternalShort) -> None:
     """거래소에만 있는 숏(수동 진입 등)을 추적 상태로 등록."""
     size = ex["size"]

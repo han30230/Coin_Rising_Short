@@ -87,3 +87,6 @@ MCAP_CACHE_TTL_SEC = int(os.getenv("MCAP_CACHE_TTL_SEC") or "900")
 FILTER_MCAP_FDV = (os.getenv("FILTER_MCAP_FDV") or "false").lower() == "true"
 MIN_MCAP_FDV_RATIO = Decimal(os.getenv("MIN_MCAP_FDV_RATIO") or "0.4")
 COINGECKO_API_BASE = os.getenv("COINGECKO_API_BASE") or "https://api.coingecko.com/api/v3"
+
+# 재시작 시 거래소 숏 포지션을 state에 복구해 ST 청산 등 관리를 이어감
+RECOVER_EXCHANGE_POSITIONS = (os.getenv("RECOVER_EXCHANGE_POSITIONS") or "true").lower() == "true"

@@ -4,7 +4,7 @@ import os
 from decimal import Decimal
 from typing import Any, Dict
 
-from coin_rising_short import config, runtime
+from coin_rising_short import config, positions, runtime
 
 position_state: Dict[str, Dict[str, Any]] = {}
 logger = logging.getLogger(__name__)
@@ -75,8 +75,6 @@ def load_qualified_watch() -> None:
             return
         restored = 0
         for symbol, entry in raw.items():
-            if symbol in position_state:
-                continue
             if not isinstance(entry, dict):
                 continue
             last_direction = entry.get("last_direction")
@@ -85,6 +83,14 @@ def load_qualified_watch() -> None:
                     last_direction = int(last_direction)
                 except (TypeError, ValueError):
                     last_direction = None
+
+            if symbol in position_state:
+                st = position_state[symbol]
+                _, qty, _ = positions.get_filled_from_state(st)
+                if qty > 0 and st.get("st_last_direction") is None and last_direction is not None:
+                    st["st_last_direction"] = last_direction
+                continue
+
             runtime.QUALIFIED_WATCH[symbol] = {
                 "added_at": float(entry.get("added_at", 0)),
                 "last_direction": last_direction,
