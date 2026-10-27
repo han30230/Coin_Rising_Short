@@ -90,3 +90,8 @@ COINGECKO_API_BASE = os.getenv("COINGECKO_API_BASE") or "https://api.coingecko.c
 
 # 재시작 시 거래소 숏 포지션을 state에 복구해 ST 청산 등 관리를 이어감
 RECOVER_EXCHANGE_POSITIONS = (os.getenv("RECOVER_EXCHANGE_POSITIONS") or "true").lower() == "true"
+
+# Entire exchange-contract history; incomplete/stale history blocks short entries.
+ATL_FILTER_ENABLED = (os.getenv("ATL_FILTER_ENABLED") or "true").lower() == "true"
+ATL_ENTRY_MULTIPLIER = Decimal(os.getenv("ATL_ENTRY_MULTIPLIER") or "1.3")
+ATL_CACHE_FILE = os.getenv("ATL_CACHE_FILE") or os.path.join(_PROJECT_ROOT, "atl_cache.json")

@@ -3,7 +3,7 @@ import time
 from decimal import Decimal
 from typing import Optional, Tuple
 
-from coin_rising_short import client, config, filters, runtime
+from coin_rising_short import atl, client, config, filters, runtime
 
 _leverage_ready: set = set()
 logger = logging.getLogger(__name__)
@@ -330,7 +330,6 @@ def place_short_order(
 ) -> Optional[Tuple[Decimal, Decimal, int]]:
     logger.info("숏 주문 시도: %s", symbol)
     try:
-        ensure_leverage(symbol)
         resp = client._http_get(
             f"{config.BASE_URL_FUTURES}/fapi/v1/ticker/price",
             params={"symbol": symbol},
@@ -340,6 +339,9 @@ def place_short_order(
         if not isinstance(resp_data, dict) or "price" not in resp_data:
             raise RuntimeError(f"{symbol} 가격 응답 형식 오류: {resp_data}")
         price = Decimal(str(resp_data["price"]))
+        if not atl.allow_short(symbol, price):
+            return None
+        ensure_leverage(symbol)
         price_step, qty_step, min_qty, min_notional = filters.get_price_step_and_qty_step(symbol)
 
         raw_price = price * (Decimal("1") + config.PREMIUM_PCT)
